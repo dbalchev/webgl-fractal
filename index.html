@@ -1,0 +1,353 @@
+<html>
+  <head>
+    <title> openBZ </title>
+    <script type = "text/javascript">
+      var gl = null;
+      var draw_buffer = null;
+      var shaderProgram = null;
+      var frag_shader = null;
+      var vert_shader = null;
+      var u_disp = new Float32Array (2);
+      var u_scale = new Float32Array (2);
+      var current_has_color = 0;
+      function cleanup () {
+          gl.deleteBuffer (draw_buffer);
+          gl.detachShader (shaderProgram, frag_shader);
+          gl.detachShader (shaderProgram, vert_shader);
+          gl.deleteShader (shaderProgram, frag_shader);
+          gl.deleteShader (shaderProgram, vert_shader);
+          gl.deleteProgram (shaderProgram);
+          
+      }
+      function init_gl (object_name) {
+          var possible_names = ["webgl", "experimental-webgl", "webkit-3d", "moz-webgl"];
+          var canvas =  document.getElementById (object_name);
+          var i;
+          if (canvas == null) throw "cannot get canvas";
+          for (i in possible_names) {
+              gl = canvas.getContext (possible_names[i], {antialias : true});
+              if (gl != null) break;
+          }
+            
+          if (gl == null) throw "cannot get context";
+          gl.viewportWidth = canvas.width;
+          gl.viewportHeight = canvas.height;
+          u_scale[0] = 2 / canvas.width;
+          u_scale[1] = 2 / canvas.height;
+          u_disp[0] = -2;
+          u_disp[1] = -1;
+          gl.clearColor(0.0, 0.0, 0.0, 1);
+          gl.depthRange (0, 1);
+          init_shaders ();
+          init_buffers ();
+          draw_scene ();
+          canvas.addEventListener ("dblclick", zoom_in, false);
+          canvas.addEventListener ("mousedown", m_down, false);
+          canvas.addEventListener ("mousemove", m_motion, false);
+//          document.addEventListener ("wheel", m_wheel, false);
+//          document.addEventListener ("mousewheel", m_wheel, false);
+	  canvas.addEventListener ("mouseup",   m_up, false);
+          canvas.addEventListener ("touchstart", t_start, false);
+          canvas.addEventListener ("touchend"  , t_end, false);
+          canvas.addEventListener ("touchleave", t_leave, false);
+          canvas.addEventListener ("touchenter", t_enter, false);
+          document.addEventListener ("keypress", k_keydown, false);
+      }
+
+      function init_buffers () {
+        draw_buffer = gl.createBuffer ();
+        gl.bindBuffer (gl.ARRAY_BUFFER, draw_buffer);
+        var verts = [
+          -1, -1,
+          1, -1,
+          1, 1,
+          -1, 1
+          ];
+        gl.bufferData (gl.ARRAY_BUFFER, new Float32Array (verts), gl.STATIC_DRAW);
+        draw_buffer.itemSize = 2;  
+
+        draw_buffer.numItems = 4;
+      }
+
+      function draw_scene () {
+        gl.viewport (0, 0, gl.viewportWidth, gl.viewportHeight);
+        gl.clear (gl.COLOR_BUFFER_BIT);
+        gl.uniform2fv (shaderProgram.u_disp, u_disp);
+        gl.uniform2fv (shaderProgram.u_scale, u_scale);
+        gl.uniform1i(shaderProgram.has_color, current_has_color);
+        gl.bindBuffer (gl.ARRAY_BUFFER, draw_buffer);
+        gl.vertexAttribPointer (shaderProgram.vertexPositionAttribute, draw_buffer.itemSize, gl.FLOAT, false, 0, 0);
+        gl.drawArrays (gl.TRIANGLE_FAN, 0, draw_buffer.numItems);
+        gl.finish ();
+      }
+
+      function init_shaders () {
+        frag_shader = getShader (gl, "frag");
+        vert_shader = getShader (gl, "vert");
+
+
+        shaderProgram = gl.createProgram ();
+        gl.attachShader (shaderProgram, vert_shader);
+        gl.attachShader (shaderProgram, frag_shader);
+        gl.linkProgram (shaderProgram);
+        if (!gl.getProgramParameter (shaderProgram, gl.LINK_STATUS)) {
+          throw "could not init shaders: " + gl.getProgramInfoLog(shaderProgram);
+        }
+        gl.useProgram (shaderProgram);
+        shaderProgram.vertexPositionAttribute = gl.getAttribLocation (shaderProgram, "vert_pos");
+        shaderProgram.u_disp = gl.getUniformLocation (shaderProgram, "u_disp");
+        shaderProgram.u_scale = gl.getUniformLocation (shaderProgram, "u_scale");
+        if (shaderProgram.vertexPositionAttribute == null) throw "no pos attrib";
+        if (shaderProgram.u_disp == null) throw "no u_disp";
+        if (shaderProgram.u_scale == null) throw "no u_scale";
+        gl.enableVertexAttribArray (shaderProgram.vertexPositionAttribute);
+        shaderProgram.has_color = gl.getUniformLocation(shaderProgram, "has_color");
+        if (shaderProgram.has_color == null) throw "no has_color";
+      }
+
+      function getShader (gl, id) {
+        var shaderScript = document.getElementById (id);
+        if (!shaderScript) {
+            throw "cannot get shader " + id;
+        }
+        var str = "";
+        var k = shaderScript.firstChild;
+        while (k) {
+            if (k.nodeType == 3) {
+                str += k.textContent;
+            }
+            k = k.nextSibling;
+        }
+        var shader;
+        if (shaderScript.type == "x-shader/x-fragment") {
+            shader = gl.createShader(gl.FRAGMENT_SHADER);
+        } else if (shaderScript.type == "x-shader/x-vertex") {
+            shader = gl.createShader(gl.VERTEX_SHADER);
+        } else {
+            return "illegal type";
+        }
+
+        gl.shaderSource(shader, str);
+        gl.compileShader(shader);
+
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            throw (gl.getShaderInfoLog(shader));
+        }
+
+        return shader
+        
+      }
+
+function k_keydown(e) {
+    if (e.charCode != 32) // space
+      return;
+    e.preventDefault();
+    if (current_has_color != 0)
+      current_has_color = 0;
+    else
+      current_has_color = 1;
+    draw_scene();
+}
+      function zoom_in (e) {
+
+        var cx = u_scale[0] * e.pageX + u_disp[0];
+        var cy = u_scale[1] * (e.target.height - e.pageY) + u_disp[1];
+
+        u_scale[0] /= 1.41;
+        u_scale[1] /= 1.41;
+
+        u_disp[0] = cx - u_scale[0] * e.target.width / 2 ;
+        u_disp[1] = cy - u_scale[1] * e.target.height / 2;
+
+        draw_scene ();
+      }
+      function zoom_out (e) {
+
+        var cx = u_scale[0] * e.pageX + u_disp[0];
+        var cy = u_scale[1] * (e.target.height - e.pageY) + u_disp[1];
+
+        u_scale[0] *= 1.41;
+        u_scale[1] *= 1.41;
+
+        u_disp[0] = cx - u_scale[0] * e.target.width / 2 ;
+        u_disp[1] = cy - u_scale[1] * e.target.height / 2;
+
+        draw_scene ();
+      }
+      var mouse_coords_old;
+      var is_mouse_down = false;
+      function m_down (e) {
+          mouse_coords_old = {x:e.pageX, y:e.pageY};
+          is_mouse_down = true;
+          e.preventDefault();
+      }
+function log (what){
+    /*
+    var t_area = document.getElementById ("output");
+    t_area.value = t_area.value +  what + "\n";
+    //nop nop nop
+      */
+}
+function m_motion(e) {
+        if (!is_mouse_down || e.which == 0)  return;
+        u_disp[0] -= u_scale[0] * (e.pageX - mouse_coords_old.x);
+        u_disp[1] += u_scale[1] * (e.pageY - mouse_coords_old.y);
+        draw_scene ();
+	mouse_coords_old = {x:e.pageX, y:e.pageY};
+      }
+      function m_up (e) { is_mouse_down = false;}
+var t_info= {};
+var double_tap_last = {};
+function t_start (te) {
+    te.preventDefault ();
+    log ("t_start " + te.touches.length + " " + te.changedTouches.length);
+    /*
+    if (te.changedTouches.length == 2) {
+              t_info = {x : te.changedTouches[0].pageX + te.changedTouches[1].pageX,
+                        y : te.changedTouches[0].pageY + te.changedTouches[1].pageY,
+                        dx: te.changedTouches[0].pageX - te.changedTouches[1].pageX,
+                        dy: te.changedTouches[0].pageY - te.changedTouches[1].pageY,
+              };
+          } else t_info = {};
+          }
+     */
+    var d_tap_thr = 500;
+    var now = new Date ();
+    if (double_tap_last !={} && 
+        now.getTime () - double_tap_last.getTime () < d_tap_thr) {
+        var cx = u_scale[0] * te.touches[0].pageX + u_disp[0];
+        var cy = u_scale[1] * (e.target.height - te.touches[0].pageY) + u_disp[1];
+
+        u_scale[0] /= 1.41;
+        u_scale[1] /= 1.41;
+
+        u_disp[0] = cx - u_scale[0] * e.target.width / 2 ;
+        u_disp[1] = cy - u_scale[1] * e.target.height / 2;
+
+        draw_scene ();
+    }
+    d_tap_thr = now;
+    t_info = te;
+
+}  
+function t_end (te) {
+          te.preventDefault ();
+          log ("t_end " + te.touches.length + " " + te.changedTouches.length);
+          /*
+          if (t_info == {}) return;     
+          if (te.changedTouches.length != 2) return;
+          t_info_new = {x : te.changedTouches[0].pageX + te.changedTouches[1].pageX,
+                        y : te.changedTouches[0].pageY + te.changedTouches[1].pageY,
+                        dx: te.changedTouches[0].pageX - te.changedTouches[1].pageX,
+                        dy: te.changedTouches[0].pageY - te.changedTouches[1].pageY,
+          };
+          u_disp[0] -= u_scale[0] * (t_info.x - t_info_new.x);
+          u_disp[1] += u_scale[1] * (t_info.y - t_info_new.y);
+          u_scale[0] *= t_info.dx * t_info.dx + t_info.dy * t_info.dy;
+          u_scale[0] /= t_info_new.dx * t_info_new.dx + t_info_new.dy * t_info_new.dy;
+          u_scale[1] *= t_info.dx * t_info.dx + t_info.dy * t_info.dy;
+          u_scale[1] /= t_info_new.dx * t_info_new.dx + t_info_new.dy * t_info_new.dy;
+          draw_scene ();          
+           */
+
+        u_disp[0] -= u_scale[0] * (te.touches[0].pageX - t_info.touches[0].pageX);
+        u_disp[1] += u_scale[1] * (te.touches[0].pageY - t_info.touches[0].pageY);
+        draw_scene ();
+        }
+function t_leave (te) {
+    te.preventDefault ();
+    log ("t_leave " + t.touches.length + " " +t.changedTouches.length);
+}
+function t_enter (te) {
+    te.preventDefault ();
+    log ("t_enter " + t.touches.length + " " +t.changedTouches.length);
+}
+    </script>
+    <script id = "vert" type = "x-shader/x-vertex">
+      attribute vec2 vert_pos;
+      void main (void) {
+        gl_Position = vec4 (vert_pos, 0.25, 1);
+      }
+    </script>
+    <script id = "frag" type = "x-shader/x-fragment">
+      //![CDATA[
+      precision mediump float;
+      uniform int has_color;
+      uniform vec2 u_scale;
+      uniform vec2 u_disp;
+      vec2 square (vec2 z) {
+        return vec2 (z.x * z.x - z.y * z.y, 2. * z.x * z.y);
+      }
+      vec3 from_hsv (vec3 hsv) {
+        float h = hsv.x;
+        float s = hsv.y;
+        float v = hsv.z;
+        float c = v * s;
+        float m = v - c;
+        int h_ = int ( (h * 6.));
+        vec3 ret;
+
+        float x = (1. - abs(mod(h * 6., 2.0)- 1.0)) * c ;
+        ret = h_ == 0 ? vec3 (c, x, 0.) : 
+              h_ == 1 ? vec3 (x, c, 0.) :
+              h_ == 2 ? vec3 (0., c, x) : 
+              h_ == 3 ? vec3 (0., x, c) :
+              h_ == 4 ? vec3 (x, 0., c) : 
+                        vec3 (c, 0., x);
+        return ret + vec3 (m);
+
+        
+      }
+      float my_norm (vec2 z) {
+        return z.x * z.x + z.y * z.y;
+        }
+      #define TAU (2.0 * 3.14159265358979323846)
+      const int num_iters = 256;//if set to 250 epic fails
+      void main (void) {
+        float threshold = 100.;
+        int out_i = 0;
+        vec2 z = vec2 (0.0);
+        vec2 c = u_scale * vec2 (gl_FragCoord.x, gl_FragCoord.y) + u_disp;
+        for (int i = 0; i < num_iters; ++i) {
+          z = square (z + c);
+          out_i++;
+          if (my_norm (z) > threshold) {
+            break;
+          }
+        }
+        float out_i_f = float (out_i);
+        float num_iters_f = float (num_iters);
+        float lum = 1.0 ;
+        float hue = (num_iters_f - 1.0 - out_i_f) / num_iters_f;//(atan(z.y, z.x) + TAU / 2.0) / TAU;
+        float whole_part;
+        hue = mod(hue + 2.0 / 3.0, 1.0);
+        vec4 rt = vec4 (from_hsv (vec3 (hue, 1, lum)), 1);
+        if(has_color != 0)
+          gl_FragColor = out_i == num_iters ? vec4(vec3(0), 1) : rt;
+        else 
+          gl_FragColor = vec4 (vec3 (1.0 - out_i_f / num_iters_f), 1);
+      }
+      //]]>
+    </script>
+  </head>
+  <body onUnload = "cleanup ()">
+    <canvas id = "boza" width = "800" height = "600" draggable = "false"> </canvas>
+    <br/>
+    <textarea id ="output" cols = "16" rows = "64"> </textarea>
+    <form id = "my-form" onchange = "radio_changed ()">
+      <input type = "radio" value = "up redraw" />
+      <input type = "radio" value = "motion redraw" />
+    </form>
+    <script type = "text/javascript">
+      try {
+          init_gl ("boza");
+          var error = gl.getError ();
+          if (error != gl.NO_ERROR) throw "error = " + error;
+          document.getElementById ("my-form")
+      } catch (e) {
+          alert (e);
+      }
+    </script>
+    
+  </body>
+</html>
